@@ -95,3 +95,25 @@ class TestValidation:
         llm_output = {"utterances": []}
         result = validate_llm_output(llm_output, ["U000001"])
         assert result.passed is False
+
+    def test_invalid_id_format_numeric(self):
+        """数値のみのidは不正として検出されるべき。"""
+        llm_output = {
+            "utterances": [
+                {"id": "1", "source_ids": ["U000001"]},
+            ]
+        }
+        result = validate_llm_output(llm_output, ["U000001"])
+        assert result.passed is False
+        assert any("不正なid形式" in msg for msg in result.errors)
+
+    def test_invalid_u_id_not_in_expected(self):
+        """expected_idsに含まれないU形式IDは不正。"""
+        llm_output = {
+            "utterances": [
+                {"id": "U000999", "source_ids": ["U000001"]},
+            ]
+        }
+        result = validate_llm_output(llm_output, ["U000001"])
+        assert result.passed is False
+        assert any("不正なid" in msg for msg in result.errors)

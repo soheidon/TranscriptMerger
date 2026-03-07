@@ -116,13 +116,56 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
         resume_mgr.clean()
         logger.info("--clean 指定: working/temp/ を初期化しました")
 
-    # 専門用語辞書の読み込み
+    # 専門用語辞書 / glossary の読み込み
     dictionary = None
-    dict_path = resolved.get("dictionary_path")
-    if dict_path and dict_path.exists():
-        with open(dict_path, "r", encoding="utf-8") as f:
-            dictionary = json.load(f)
-        logger.info(f"専門用語辞書読み込み: {len(dictionary)}語")
+    input_dir = resolved.get("input_dir")
+
+    # 1. glossary_confirmed.tsv を最優先で見る
+    glossary_terms: list[str] = []
+    if input_dir:
+        glossary_tsv = input_dir / "glossary_confirmed.tsv"
+        glossary_txt = input_dir / "glossary.txt"
+
+        if glossary_tsv.exists():
+            with open(glossary_tsv, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    term = parts[0].strip()
+                    # ヘッダ行（表記 等）はスキップ
+                    if not term or term in ("表記", "用語"):
+                        continue
+                    glossary_terms.append(term)
+            if glossary_terms:
+                dictionary = {"用語": glossary_terms}
+                logger.info(f"glossary_confirmed.tsv から {len(glossary_terms)} 語を読み込みました")
+        else:
+            # glossary.txt はあるが confirmed.tsv がない場合は警告のみ
+            if glossary_txt.exists():
+                logger.warning(
+                    "glossary.txt は存在しますが glossary_confirmed.tsv が見つかりません。"
+                    "glossary 前処理を実行するか、glossary_confirmed.tsv を作成してください。"
+                )
+
+    # 2. 従来の JSON 辞書（dictionary_path）があればフォールバックとして使用
+    if dictionary is None:
+        dict_path = resolved.get("dictionary_path")
+        if dict_path and dict_path.exists():
+            with open(dict_path, "r", encoding="utf-8") as f:
+                dictionary = json.load(f)
+            logger.info(f"専門用語辞書読み込み: type={type(dictionary).__name__}")
+
+    # コンテキストプロンプトの読み込み（任意）
+    context_prompt = None
+    if input_dir:
+        for ctx_filename in ("context_prompt.txt", "context_prompt.md"):
+            ctx_path = input_dir / ctx_filename
+            if ctx_path.exists():
+                context_prompt = ctx_path.read_text(encoding="utf-8").strip()
+                logger.info(f"コンテキストプロンプト読み込み: {ctx_path}")
+                break
 
     # LLMプロバイダー初期化
     provider = get_provider(config["api"])
@@ -157,7 +200,7 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
         }
 
         # プロンプト構築
-        prompt = build_prompt(chunk, id_cue_pairs, dictionary)
+        prompt = build_prompt(chunk, id_cue_pairs, dictionary, context_prompt)
 
         # プロンプト保存（デバッグ用）
         if config["logging"].get("save_prompt", False):
@@ -269,7 +312,7 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
                         f"{chunk.time_range[0]:.0f}–{chunk.time_range[1]:.0f}秒）",
                 "category": "CONTENT",
                 "uncertain": True,
-                "uncertain_reason": "",
+                "uncertain_reason": "NONE",
                 "uncertain_span_ids": [],
                 "source": "PRIMARY",
                 "source_ids": chunk.srt_ids,

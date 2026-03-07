@@ -6,7 +6,7 @@ pyyaml>=6.0                  # config.yaml / job.yaml の読み込み
 requests>=2.31                # LLM API呼び出し
 
 # --- LLM Providers ---
-google-generativeai>=0.8      # Gemini API（初期実装プロバイダー）
+google-genai>=1.0             # Gemini API（google-generativeai の後継）
 # openai>=1.0                 # OpenAI（将来対応時にコメント解除）
 # anthropic>=0.30             # Anthropic（将来対応時にコメント解除）
 

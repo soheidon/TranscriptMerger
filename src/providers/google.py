@@ -1,7 +1,7 @@
 """
 Gemini API プロバイダー実装。
 
-google-generativeai パッケージを使用する。
+google-genai パッケージを使用する。
 Structured Outputs (response_schema) で構造化JSONを取得する。
 """
 
@@ -29,9 +29,8 @@ class GeminiProvider(BaseLLMProvider):
         """Geminiクライアントを遅延初期化する。"""
         if self._client is None:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._client = genai.GenerativeModel(self.model)
+                from google import genai
+                self._client = genai.Client(api_key=self.api_key)
                 logger.info(f"Gemini API初期化完了: model={self.model}")
             except Exception as e:
                 raise NonRetryableError(f"Gemini API初期化失敗: {e}") from e
@@ -49,21 +48,23 @@ class GeminiProvider(BaseLLMProvider):
         Returns:
             パース済みJSON辞書
         """
+        from google.genai import types
+
         client = self._get_client()
 
         try:
-            response = client.generate_content(
-                prompt,
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "response_schema": schema,
-                    "temperature": 0.1,  # 再現性を高める
-                },
-                request_options={"timeout": self.timeout},
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    temperature=0.1,
+                ),
             )
 
             # レスポンスのテキストを取得
-            text = response.text
+            text = getattr(response, "text", None)
             if not text:
                 raise RetryableError("Gemini APIから空のレスポンス")
 

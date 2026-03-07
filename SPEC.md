@@ -371,7 +371,7 @@ vtt_insert_index = {
 
 - ファイル: `final_transcript.txt`
 - タイムスタンプなし（可読性優先）
-- 不確実箇所のみPython側で復元したタイムスタンプを括弧で併記
+- 不確実箇所は `[聞き取り不確実]` の簡略注記のみを末尾に付与する
 - `BACKCHANNEL` のうち削除条件（8.2節参照）を満たすものは除外
 
 ```
@@ -381,9 +381,8 @@ SPEAKER_00
 SPEAKER_01
 次の発言内容。
 
-（聞き取り不確実 00:12:34–00:12:41 / 理由: 主VTTとZoom VTTが不一致）
 SPEAKER_00
-不確実な区間のテキスト。
+不確実な区間のテキスト。 [聞き取り不確実]
 ```
 
 ### 6.2 SRT（レビュー・編集用）
@@ -445,7 +444,7 @@ WEBVTT
       "text": "こんにちは、今日は...",
       "category": "CONTENT",
       "uncertain": false,
-      "uncertain_reason": "",
+      "uncertain_reason": "NONE",
       "source": "PRIMARY",
       "source_ids": ["U000001"],
       "edit_type": "NONE",
@@ -549,8 +548,8 @@ LLMにはタイムスタンプを一切渡さない。入力はID + 話者 + テ
           },
           "uncertain_reason": {
             "type": "string",
-            "enum": ["", "AB_MISMATCH", "LOW_CONFIDENCE", "SPEAKER_AMBIGUOUS", "OVERLAP"],
-            "description": "不確実の理由。uncertain=falseの場合は空文字"
+            "enum": ["NONE", "AB_MISMATCH", "LOW_CONFIDENCE", "SPEAKER_AMBIGUOUS", "OVERLAP"],
+            "description": "不確実の理由。uncertain=falseの場合は\"NONE\""
           },
           "uncertain_span_ids": {
             "type": "array",
@@ -637,6 +636,7 @@ LLMにはタイムスタンプを一切渡さない。入力はID + 話者 + テ
 | VTT補完条件 | 主VTTに該当区間の発話が欠落しており、かつVTTに対応テキストが存在する場合のみ |
 | 捏造禁止 | 主VTT・Zoom VTTどちらにも根拠がない内容の追加・推測を一切禁止する |
 | テキスト修正 | 明らかなASR誤変換の修正は許可する。`edit_type` を `NORMALIZE` とし、`edit_note` に修正内容を記録する |
+| 話者判定困難時 | 前話者への吸収を禁止する。`SPEAKER_UNKNOWN` を使い、`uncertain=true` + `uncertain_reason="SPEAKER_AMBIGUOUS"` を設定する |
 
 ### 8.2 相槌の分類と削除
 
@@ -840,7 +840,7 @@ chunking:
 # === LLM API ===
 api:
   provider: google                   # google | openai | anthropic
-  model: gemini-2.0-flash            # プロバイダーに応じたモデル名
+  model: gemini-3.1-pro-preview      # プロバイダーに応じたモデル名
   max_retries: 3                     # APIエラーのリトライ上限
   max_validation_retries: 2          # IDバリデーションのリトライ上限
   backoff_base_sec: 2                # 指数バックオフの基底秒数

@@ -70,7 +70,7 @@ def restore_timestamps(
             text=utt_dict.get("text", ""),
             category=Category(utt_dict.get("category", "CONTENT")),
             uncertain=utt_dict.get("uncertain", False),
-            uncertain_reason=utt_dict.get("uncertain_reason", ""),
+            uncertain_reason=utt_dict.get("uncertain_reason", "NONE"),
             uncertain_span_ids=utt_dict.get("uncertain_span_ids", []),
             source=utt_dict.get("source", "PRIMARY"),
             source_ids=source_ids,
@@ -89,20 +89,40 @@ def restore_timestamps(
 def _should_exclude_from_txt(utt: Utterance) -> bool:
     """TXT出力からこの発話を除外すべきか判定する。
 
-    BACKCHANNELのうち、短く、内容語を含まないもののみ除外。
+    BACKCHANNELのうち短い相槌、uncertain+BACKCHANNEL、
+    不確実な短いノイズパターンを除外する。
     """
-    if utt.category != Category.BACKCHANNEL:
-        return False
-    if len(utt.text) > 10:
-        return False
-    # 内容語チェック（数字、否定語、依頼語等を含む場合は残す）
     import re
-    if re.search(r"\d", utt.text):
-        return False
-    keep_words = ["いいえ", "違う", "だめ", "ない", "ません", "お願い", "ください", "了解", "承知"]
-    if any(w in utt.text for w in keep_words):
-        return False
-    return True
+
+    # 既存のBACKCHANNEL除外ロジック（短い相槌）
+    if utt.category == Category.BACKCHANNEL:
+        if len(utt.text) <= 10:
+            if not re.search(r"\d", utt.text):
+                keep_words = [
+                    "いいえ", "違う", "だめ", "ない", "ません",
+                    "お願い", "ください", "了解", "承知",
+                ]
+                if not any(w in utt.text for w in keep_words):
+                    return True
+
+    # 追加1：uncertain + BACKCHANNEL は常にTXTから除外
+    if utt.uncertain and utt.category == Category.BACKCHANNEL:
+        return True
+
+    # 追加2：不確実な短いノイズパターンの除去
+    if utt.uncertain and len(utt.text) <= 15:
+        noise_patterns = [
+            "ごめん", "ごめんごめん",
+            "そう", "でも",
+            "ありがとうございました",
+            "よいしょ", "いいっしょ",
+            "ごちそう",
+            "おはようございます",
+        ]
+        if utt.text.rstrip("。、！？ ") in noise_patterns:
+            return True
+
+    return False
 
 
 def apply_speaker_map(
@@ -145,19 +165,6 @@ def export_txt(
         if _should_exclude_from_txt(utt):
             continue
 
-        # 不確実箇所のアノテーション
-        if utt.uncertain and utt.start is not None and utt.end is not None:
-            reason_map = {
-                "AB_MISMATCH": "主VTTとZoom VTTが不一致",
-                "LOW_CONFIDENCE": "聞き取りにくい",
-                "SPEAKER_AMBIGUOUS": "話者判定困難",
-                "OVERLAP": "発話重複",
-            }
-            reason_text = reason_map.get(str(utt.uncertain_reason), "不明")
-            start_ts = _format_timestamp_vtt(utt.start)
-            end_ts = _format_timestamp_vtt(utt.end)
-            lines.append(f"（聞き取り不確実 {start_ts}–{end_ts} / 理由: {reason_text}）")
-
         # 話者が変わったらラベルを出力
         if utt.speaker != current_speaker:
             if current_speaker is not None:
@@ -165,7 +172,28 @@ def export_txt(
             lines.append(utt.speaker)
             current_speaker = utt.speaker
 
-        lines.append(utt.text)
+        # テキスト本体 + 不確実注記（あれば末尾に付与）
+        # 話者曖昧 (SPEAKER_AMBIGUOUS) の場合はテキスト自体は明瞭なためタグを付けない。
+        # AB_MISMATCH でも、NORMALIZE/VTT_SUPPLEMENT で整形済みならTXTではタグを外す。
+        show_uncertain_tag = (
+            utt.uncertain
+            and str(utt.uncertain_reason) != "SPEAKER_AMBIGUOUS"
+            and not (
+                str(utt.uncertain_reason) == "AB_MISMATCH"
+                and str(utt.edit_type) in ("NORMALIZE", "VTT_SUPPLEMENT")
+            )
+        )
+
+        if show_uncertain_tag:
+            if utt.start is not None:
+                minutes = int(utt.start // 60)
+                seconds = int(utt.start % 60)
+                ts_hint = f"{minutes:02d}:{seconds:02d}頃"
+                lines.append(f"{utt.text} [聞き取り不確実 {ts_hint}]")
+            else:
+                lines.append(f"{utt.text} [聞き取り不確実]")
+        else:
+            lines.append(utt.text)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -224,7 +252,7 @@ def export_json(
                 "text": utt.text,
                 "category": utt.category.value,
                 "uncertain": utt.uncertain,
-                "uncertain_reason": str(utt.uncertain_reason) if utt.uncertain_reason else "",
+                "uncertain_reason": str(utt.uncertain_reason) if utt.uncertain_reason else "NONE",
                 "source": utt.source,
                 "source_ids": utt.source_ids,
                 "vtt_supplemented": utt.vtt_supplemented,

@@ -6,7 +6,7 @@
 # --- LLM API ---
 api:
   provider: google                     # google | openai | anthropic
-  model: gemini-2.0-flash              # プロバイダーに応じたモデル名
+  model: gemini-3.1-pro-preview        # プロバイダーに応じたモデル名
   api_key_env: GEMINI_API_KEY          # APIキーを格納する環境変数名
   max_retries: 3                       # APIエラーのリトライ上限
   max_validation_retries: 2            # IDバリデーションのリトライ上限

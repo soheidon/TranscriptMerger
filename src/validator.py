@@ -88,7 +88,7 @@ def validate_llm_output(
         result.errors.append("utterancesが空です")
         return result
 
-    # 出力に含まれるsource_idsを全て収集
+    # 出力に含まれるsource_idsおよびidを全て収集
     all_output_source_ids: list[str] = []
     source_id_to_utterance: dict[str, list[str]] = {}
 
@@ -101,6 +101,21 @@ def validate_llm_output(
             if sid not in source_id_to_utterance:
                 source_id_to_utterance[sid] = []
             source_id_to_utterance[sid].append(utt_id)
+
+        # idフィールド自体の形式チェック
+        if utt_id:
+            # 主VTT由来のIDは U000001 形式で expected_ids に含まれている必要がある
+            if utt_id.startswith("U"):
+                if utt_id not in expected_set:
+                    result.passed = False
+                    result.errors.append(f"不正なid: 想定外のU形式IDが使用されています: {utt_id}")
+            # VTT補完用IDは V_INSERT_* のみ許可
+            elif utt_id.startswith("V_INSERT_"):
+                pass
+            else:
+                # それ以外の形式（例: "1", "A1" 等）は不正
+                result.passed = False
+                result.errors.append(f"不正なid形式: {utt_id}")
 
     # 1. ID網羅性: 入力IDが全て出力のsource_idsに含まれるか
     output_source_set = set(all_output_source_ids)

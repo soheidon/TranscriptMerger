@@ -17,24 +17,26 @@ Zoomクラウド録画のVTTと、Whisper+pyannoteによる文字起こし結果
 
 ### 1. Python の確認
 
-Python 3.10以上を使用する。
+Python 3.10以上を使用する。**推奨**: Python 3.13 系（`py -V:3.13` で起動する系統を正とする）。
 
 ```powershell
-python --version
+py -V:3.13 --version
 ```
 
-### 2. 仮想環境の作成と有効化
+### 2. 仮想環境の作成と有効化（オプション）
 
 ```powershell
-python -m venv .venv
+py -V:3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 ### 3. 依存パッケージのインストール
 
 ```powershell
-pip install -r requirements.txt
+py -V:3.13 -m pip install -r requirements.txt
 ```
+
+> **補足**: Gemini SDK は `google-genai`（旧 `google-generativeai` の後継）を使用する。
 
 ### 4. APIキーの設定
 
@@ -81,18 +83,21 @@ C:\Users\user\dev\
 C:\Users\user\dev\TranscriptMergerJobs\
   2026-03-07_定例会議\
     input\
-      whisper_output.vtt    ← Whisper+pyannoteの出力（VTT形式）
-      zoom_output.vtt       ← Zoomクラウド録画の文字起こし
+      whisper_output.vtt       ← Whisper+pyannoteの出力（VTT形式）
+      zoom_output.vtt          ← Zoomクラウド録画の文字起こし
+      glossary.txt             ← 用語辞書（任意・1行1語）
+      context_prompt.txt       ← LLM用の背景プロンプト（任意・後述）
+      glossary_confirmed.tsv   ← 辞書前処理の出力（サブアプリで生成）
     job.yaml
 ```
 
 `working/` と `output/` は必要に応じて自動生成される想定である。
 
-### 2. 実行する
+### 2. メインアプリを実行する
 
 ```powershell
 cd C:\Users\user\dev\TranscriptMerger
-python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
 ```
 
 ### 3. 成果物を確認する
@@ -116,7 +121,7 @@ python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例
 そのまま同じコマンドで再実行すれば、完了済みチャンクはスキップされる。
 
 ```powershell
-python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
 ```
 
 ### 最初からやり直したい場合
@@ -124,7 +129,7 @@ python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例
 `working/` を初期化してから実行する。
 
 ```powershell
-python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --clean
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --clean
 ```
 
 ### オフセットを手動指定したい場合
@@ -132,7 +137,7 @@ python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例
 VTTが遅れている場合などは、秒数を直接指定できる。
 
 ```powershell
-python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --offset-sec 12.5
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --offset-sec 12.5
 ```
 
 ### 部分成功を許容したい場合
@@ -140,8 +145,104 @@ python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例
 デフォルトは `strict` である。欠損チャンクがある場合でも可能な範囲で出力したい場合は `--best-effort` を使う。
 
 ```powershell
-python .\main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --best-effort
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議" --best-effort
 ```
+
+## 辞書（glossary）の使い方
+
+固有名詞（人名・地名・施設名など）の表記ゆれや誤変換をLLMに正しく修正させるために、辞書を使うことができる。
+
+### context_prompt.txt（LLM用の背景プロンプト）
+
+`input/context_prompt.txt` には、**2つのVTTを突合してLLMに修正させる際に参照してほしい情報**を書く。  
+メインアプリが各チャンク処理時にLLMに渡し、話者判定・表記統一・誤変換修正の判断材料になる。
+
+* 地域や調査の背景、固有名の通称（「ユープラザ」＝「ユープラザうたづ」など）を書くとよい
+* 辞書前処理サブアプリも読み込み、読み推定・通称判断の参考にする（副次的）
+
+```text
+この音声は、香川県綾歌郡宇多津町で実施したインタビュー調査の録音である。
+「ユープラザうたづ」は会話では「ユープラザ」と呼ばれることがある。
+```
+
+### 辞書ファイルの更新
+
+`input/glossary.txt` に、**正しい表記**を1行1語で書く。
+* `#` で始まる行はコメント（無視）
+* 空行は無視
+* 読みや誤変換例は書かなくてよい（LLMが推定する）
+
+```text
+宇多津
+宇多津町役場
+ユープラザうたづ
+聖通寺山
+```
+
+### 辞書前処理サブアプリの実行
+
+`glossary.txt` を編集したら、**辞書前処理**を実行して `glossary_confirmed.tsv` を生成する。  
+本アプリ（メイン）は `glossary_confirmed.tsv` を参照する。
+
+```powershell
+cd C:\Users\user\dev\TranscriptMerger
+py -V:3.13 tools/generate_glossary_tsv.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
+```
+
+* 入力: `input/glossary.txt`
+* オプション: `input/context_prompt.txt` があれば読み込み、LLMに背景として渡す
+* 出力: `input/glossary_confirmed.tsv`（表記と読みのTSV）
+* 完了後、VS Code で TSV が自動で開く（`code` コマンドがある場合）
+
+TSV の内容を確認し、必要なら手動で修正してからメインアプリを実行する。
+
+### メインアプリの実行（辞書を使う場合の流れ）
+
+1. `glossary.txt` を編集
+2. 辞書前処理を実行 → `glossary_confirmed.tsv` を生成・確認
+3. メインアプリを実行
+
+```powershell
+py -V:3.13 main.py --job "C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議"
+```
+
+* `glossary_confirmed.tsv` が存在すれば自動で読み込まれる
+* `glossary.txt` はあるが `glossary_confirmed.tsv` がない場合は警告が出る（辞書前処理を実行すること）
+
+### 辞書を使わない場合
+
+辞書ファイルを置かなければ、辞書なしでメインアプリが動作する。  
+従来の `job.yaml` の `dictionary_path` で JSON 辞書を指定することも可能（フォールバック）。
+
+---
+
+## 実行環境に関する補足
+
+今回から、実行環境は **Python 3.13 系** に切り替えている。
+従来の 3.12 系は `Scripts` 周りの exe 更新で不安定だったため、現在は **`py -V:3.13` で起動する系統を正とする**。
+
+### 現在の前提
+
+* Python 本体: `C:\Users\Sohei\AppData\Local\Python\pythoncore-3.13-64\python.exe`
+* 実行コマンド例:
+  * `py -V:3.13 -m pip install -r requirements.txt`
+  * `py -V:3.13 main.py --job <job_path>`
+* Gemini SDK:
+  * 旧 `google-generativeai` ではなく **`google-genai`** を使用
+* Gemini モデル:
+  * 現在は `gemini-3.1-pro-preview` で実行しているが、必要に応じて `gemini-2.5-flash` / `gemini-2.5-pro` に切り替え可能な設計
+
+### 注意
+
+* `python` コマンド自体はまだ別バージョンを向く可能性があるため、当面は **`py -V:3.13` を明示**して実行・検証すること
+* Conda の `(base)` 自動起動は無効化済み
+* PowerShell 起動時に Conda が前提にならない状態で検証している
+
+### 改修時に気にしてほしいこと
+
+* 3.13 環境でそのまま動くこと
+* `google-genai` 前提で provider 実装・補助スクリプトが動くこと
+* 依存関係や README のコマンド例も、必要なら `py -V:3.13` ベースに合わせること
 
 ## `jobs/example_job/` について
 
@@ -173,7 +274,7 @@ move C:\Users\user\dev\TranscriptMergerJobs\2026-03-07_定例会議 D:\Transcrip
 
 ```powershell
 git status
-pytest tests/
+py -V:3.13 -m pytest tests/
 ```
 
 ## トラブルシューティング（Windows環境）

@@ -139,7 +139,7 @@ class Category(str, Enum):
 
 class UncertainReason(str, Enum):
     """不確実理由。"""
-    NONE = ""
+    NONE = "NONE"
     AB_MISMATCH = "AB_MISMATCH"
     LOW_CONFIDENCE = "LOW_CONFIDENCE"
     SPEAKER_AMBIGUOUS = "SPEAKER_AMBIGUOUS"
@@ -160,7 +160,7 @@ class Utterance:
 
     Attributes:
         id: 発話ID（U000001 or V_INSERT_001）
-        speaker: 話者ラベル
+        speaker: 話者ラベル（例: "SPEAKER_00"）。判定困難な場合は "SPEAKER_UNKNOWN"
         text: 整形済みテキスト
         category: 発話分類
         uncertain: 聞き取り不確実フラグ
