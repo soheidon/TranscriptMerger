@@ -171,16 +171,17 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
     provider = get_provider(config["api"])
     max_val_retries = config["api"].get("max_validation_retries", 2)
 
-    for chunk in chunks:
+    total_chunks = len(chunks)
+    for i, chunk in enumerate(chunks):
         chunk_idx = chunk.index
 
         # レジューム判定
         if resume_mgr.is_completed(chunk_idx):
-            logger.info(f"チャンク{chunk_idx}: 完了済み、スキップ")
+            logger.info(f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 完了済み、スキップ")
             continue
 
         logger.info(
-            f"チャンク{chunk_idx}: 処理開始 "
+            f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 処理中 "
             f"({chunk.time_range[0]:.1f}–{chunk.time_range[1]:.1f}秒)"
         )
 
@@ -262,7 +263,15 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
             if llm_output:
                 meta_info["retry_count"] = 0
                 resume_mgr.save_result(chunk_idx, llm_output, meta_info)
-                logger.info(f"チャンク{chunk_idx}: 完了")
+                # チャンク品質統計
+                utts = llm_output.get("utterances", [])
+                n_uncertain = sum(1 for u in utts if u.get("uncertain"))
+                n_ab = sum(1 for u in utts if str(u.get("uncertain_reason", "")) == "AB_MISMATCH")
+                n_bc = sum(1 for u in utts if str(u.get("category", "")) == "BACKCHANNEL")
+                logger.info(
+                    f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 完了 "
+                    f"(utterances={len(utts)}, uncertain={n_uncertain}, AB_MISMATCH={n_ab}, BACKCHANNEL={n_bc})"
+                )
             else:
                 raise RuntimeError(
                     f"チャンク{chunk_idx}: LLM出力のバリデーションに失敗"
