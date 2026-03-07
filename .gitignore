@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+.venv/
+
+# ジョブデータ（gitに含めない）
+jobs/*/input/*
+jobs/*/working/*
+jobs/*/output/*
+
+# ただしexample_jobの骨組みと.gitkeepは残す
+!jobs/example_job/
+!jobs/example_job/job.yaml
+!jobs/example_job/input/.gitkeep
+!jobs/example_job/working/.gitkeep
+!jobs/example_job/output/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 環境変数
+.env

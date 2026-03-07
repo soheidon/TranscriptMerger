@@ -1,0 +1,56 @@
+# =============================================================
+# Transcript-Merger-AI 全体既定設定
+# ジョブ固有の設定は各ジョブフォルダの job.yaml で上書きする
+# =============================================================
+
+# --- LLM API ---
+api:
+  provider: google                     # google | openai | anthropic
+  model: gemini-2.0-flash              # プロバイダーに応じたモデル名
+  api_key_env: GEMINI_API_KEY          # APIキーを格納する環境変数名
+  max_retries: 3                       # APIエラーのリトライ上限
+  max_validation_retries: 2            # IDバリデーションのリトライ上限
+  backoff_base_sec: 2                  # 指数バックオフの基底秒数
+  timeout_sec: 120                     # リクエストタイムアウト
+  rate_limit_respect: true             # 429時にRetry-Afterを尊重するか
+  include_chunk_summary: false         # chunk_summaryを出力させるか
+
+# --- チャンク分割 ---
+chunking:
+  target_duration_sec: 300
+  search_window_stage1_sec: 180
+  search_window_stage2_sec: 300
+  gap_threshold_sec: 1.2
+  overlap_sec: 15                      # 前後オーバーラップ（秒）
+
+# --- オフセット検出 ---
+offset:
+  mode: auto                           # auto | manual | skip
+  manual_offset_sec: 0.0
+  sample_windows:                      # サンプル窓の種別
+    - head
+    - mid
+    - tail
+  window_duration_sec: 300
+  vtt_search_margin_sec: 300
+  similarity_threshold: 0.6
+  min_valid_pairs: 3
+  mad_k: 3.0
+  max_offset_sec: 600
+  use_reading_normalization: false     # 初期実装では無効
+
+# --- 出力 ---
+output:
+  formats:
+    - txt
+    - srt
+    - vtt
+    - json
+  completion_mode: strict              # strict | best_effort
+  txt_mode: clean                      # 将来拡張: verbatim | readable
+
+# --- ログ ---
+logging:
+  log_level: INFO                      # DEBUG | INFO | WARNING | ERROR
+  save_prompt: false                   # LLMに送信したプロンプトを保存するか
+  save_raw_response: false             # LLMのrawレスポンスを保存するか

@@ -1,0 +1,18 @@
+# Transcript-Merger-AI dependencies
+# Python 3.10+ required
+
+# --- Core ---
+pyyaml>=6.0                  # config.yaml / job.yaml の読み込み
+requests>=2.31                # LLM API呼び出し
+
+# --- LLM Providers ---
+google-generativeai>=0.8      # Gemini API（初期実装プロバイダー）
+# openai>=1.0                 # OpenAI（将来対応時にコメント解除）
+# anthropic>=0.30             # Anthropic（将来対応時にコメント解除）
+
+# --- 日本語処理（初期はオプション） ---
+# pykakasi>=2.2               # 日本語読み正規化（use_reading_normalization有効時に必要）
+
+# --- テスト ---
+pytest>=7.0
+pytest-cov>=4.0

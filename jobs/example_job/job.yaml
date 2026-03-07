@@ -1,0 +1,21 @@
+# =============================================================
+# ジョブ固有設定（サンプル）
+# app/config.yaml の値を上書きする。未指定キーは既定値を使用
+# =============================================================
+
+# --- 入力ファイル ---
+# input/ フォルダ内のファイル名がデフォルト名と異なる場合に指定
+# input:
+#   primary_vtt_filename: whisper_output.vtt
+#   zoom_vtt_filename: zoom_output.vtt
+#   dictionary_path: dictionary.json    # 専門用語辞書（input/ 内に配置）
+#   speaker_map_path: speaker_map.json  # 話者マップ（input/ 内に配置）
+
+# --- オフセット ---
+# offset:
+#   mode: manual                        # 手動指定する場合
+#   manual_offset_sec: 12.5             # VTTの遅れ秒数
+
+# --- 出力 ---
+# output:
+#   completion_mode: best_effort        # 部分成功を許容する場合

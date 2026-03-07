@@ -1,0 +1,75 @@
+# Transcript-Merger-AI - Cursor Rules
+
+## プロジェクト概要
+Zoomクラウド録画（VTT）とWhisper+pyannote（SRT）の2つの文字起こしを統合し、
+LLMで比較・補完・クレンジングするバッチ処理CLIツール。
+
+## 設計原則（厳守）
+1. **主VTT正・Zoom VTT補助**: 主VTT（Whisper+pyannote）を主データ、Zoom VTTは欠落補完のみ
+2. **捏造禁止**: 主VTT・Zoom VTTどちらにも根拠がない情報の追加を一切禁止
+3. **LLMにタイムスタンプを触らせない**: 入出力はIDベース。タイムスタンプはPython側で復元
+4. **冪等・再開可能**: チャンク単位で中間結果を保存、完了済みはスキップ
+5. **LLMプロバイダー非依存**: 仕様はLLM抽象。初期実装はGemini
+
+## 技術スタック
+- Python 3.10+
+- Windows ローカル実行（Docker不要）
+- LLM API: Gemini（初期）、OpenAI/Anthropic（将来）
+- 日本語読み正規化: pykakasi（初期はOFF、本線安定後に有効化）
+- MeCabは使わない（必要性が確定するまで）
+
+## ファイル構成
+- `main.py`: CLIエントリポイント（argparse）
+- `src/config_loader.py`: config.yaml + job.yaml のマージ
+- `src/parser.py`: SRT/VTTパーサー
+- `src/normalizer.py`: テキスト正規化（読み変換含む）
+- `src/offset.py`: 複数窓タイムオフセット推定（MADベース）
+- `src/id_manager.py`: ID付与・対応表管理
+- `src/chunker.py`: チャンク分割（オーバーラップ付き）
+- `src/llm_client.py`: LLM APIクライアント（プロバイダー抽象）
+- `src/providers/`: プロバイダー別実装
+- `src/validator.py`: IDバリデーション
+- `src/resume.py`: レジューム管理
+- `src/exporter.py`: 最終出力生成（TXT/SRT/VTT/JSON）
+
+## 設定の優先順位
+CLI引数 > job.yaml > config.yaml > デフォルト値
+
+## ジョブフォルダ構成
+```
+jobs/<会議名>/
+  input/       ← ユーザーがSRT/VTTを置く
+  working/     ← temp + logs（自動生成）
+  output/      ← 最終成果物（自動生成）
+  job.yaml     ← ジョブ固有設定（オプション）
+```
+
+## コーディング規約
+- 型ヒント必須（typing モジュール使用）
+- docstring は Google スタイル
+- ログは標準 logging モジュールを使用
+- エラーは具体的な例外クラスを定義して使う
+- パス操作は pathlib.Path を使用
+- テストは pytest
+
+## 重要な仕様ポイント
+- チャンクは前後15秒のオーバーラップ付き。LLM出力のうち本体部分のみ採用
+- source_ids: 連続IDの結合のみ許可。非連続結合・分割は禁止
+- IDバリデーション: LLM出力後に網羅性・重複・未知ID・オーバーラップ漏出をチェック
+- オフセット検出: 冒頭・中盤・終盤の3窓、MADベース外れ値除去
+- LOW信頼度時: 候補なし→offset=0、不安定→仮適用+警告、手動指定→優先
+- 完了モード: strict（欠損で停止）/ best_effort（欠損マーク付き仮出力）
+
+## 責務分担（注意）
+- `--clean` フラグ: main.py が受け取り、pipeline.py の run_pipeline(clean=True) に渡す。
+  実際の初期化は pipeline.py 内で ResumeManager.clean() を呼ぶ。
+- パス解決: config_loader.py が job_dir 基準で解決する。pipeline.py はパス解決しない。
+- タイムスタンプ復元: exporter.py が id_manager を使って復元する。LLMは関与しない。
+
+## セキュリティ
+- 実会議データ（SRT/VTT/output）は絶対にgitにコミットしない
+- APIキーはコードに埋め込まず、環境変数（api_key_env）経由で取得する
+- リポジトリ本体と実ジョブデータは別フォルダに置くことを推奨
+
+## 詳細仕様
+SPEC.md を参照のこと
