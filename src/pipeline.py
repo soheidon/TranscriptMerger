@@ -36,13 +36,19 @@ from src.validator import validate_llm_output
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> None:
+def run_pipeline(
+    config: dict[str, Any],
+    job_dir: Path,
+    clean: bool = False,
+    selected_chunks: set[int] | None = None,
+) -> None:
     """メインパイプラインを実行する。
 
     Args:
         config: マージ済み設定辞書
         job_dir: ジョブフォルダのパス
         clean: Trueの場合、working/temp/ を初期化してから処理を開始する
+        selected_chunks: 指定時は該当チャンクのみ再処理する
     """
     resolved = config["_resolved"]
     start_time = time.time()
@@ -101,6 +107,19 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
 
     if not chunks:
         raise ValueError("チャンク分割の結果が空です")
+
+    # 部分再処理の対象抽出
+    if selected_chunks is not None:
+        target_chunks = [c for c in chunks if c.index in selected_chunks]
+        missing = sorted(selected_chunks - {c.index for c in chunks})
+        if missing:
+            raise ValueError(f"指定されたチャンク番号が存在しません: {missing}")
+        logger.info(
+            "部分再処理モード: 対象チャンク=%s",
+            [c.index for c in target_chunks],
+        )
+    else:
+        target_chunks = chunks
 
     # ============================================================
     # Step 5: LLM順次処理
@@ -171,17 +190,19 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
     provider = get_provider(config["api"])
     max_val_retries = config["api"].get("max_validation_retries", 2)
 
-    total_chunks = len(chunks)
-    for i, chunk in enumerate(chunks):
+    total_target_chunks = len(target_chunks)
+    for i, chunk in enumerate(target_chunks):
         chunk_idx = chunk.index
 
         # レジューム判定
         if resume_mgr.is_completed(chunk_idx):
-            logger.info(f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 完了済み、スキップ")
+            logger.info(
+                f"[{i+1}/{total_target_chunks}] チャンク{chunk_idx}: 完了済み、スキップ"
+            )
             continue
 
         logger.info(
-            f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 処理中 "
+            f"[{i+1}/{total_target_chunks}] チャンク{chunk_idx}: 処理中 "
             f"({chunk.time_range[0]:.1f}–{chunk.time_range[1]:.1f}秒)"
         )
 
@@ -200,13 +221,11 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
             "offset_applied_sec": offset_result.applied_offset_sec,
         }
 
-        # プロンプト構築
-        prompt = build_prompt(chunk, id_cue_pairs, dictionary, context_prompt)
-
-        # プロンプト保存（デバッグ用）
-        if config["logging"].get("save_prompt", False):
-            prompt_path = resolved["temp_dir"] / f"prompt_chunk_{chunk_idx:03d}.txt"
-            prompt_path.write_text(prompt, encoding="utf-8")
+        # プロンプト構築（リトライ時は前回のバリデーション誤りを渡す）
+        validation_feedback: list[str] | None = None
+        prompt = build_prompt(
+            chunk, id_cue_pairs, dictionary, context_prompt, validation_feedback
+        )
 
         # LLM呼び出し + IDバリデーション
         llm_output = None
@@ -214,6 +233,11 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
 
         try:
             while validation_retries <= max_val_retries:
+                # プロンプト保存（デバッグ用）
+                if config["logging"].get("save_prompt", False):
+                    prompt_path = resolved["temp_dir"] / f"prompt_chunk_{chunk_idx:03d}.txt"
+                    prompt_path.write_text(prompt, encoding="utf-8")
+
                 # API呼び出し（リトライ付き）
                 raw_result = provider.call_with_retry(prompt, OUTPUT_SCHEMA)
 
@@ -249,6 +273,14 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
                             f"チャンク{chunk_idx}: IDバリデーション不合格"
                             f"（試行{validation_retries}/{max_val_retries}）。リトライ"
                         )
+                        validation_feedback = validation.errors
+                        prompt = build_prompt(
+                            chunk,
+                            id_cue_pairs,
+                            dictionary,
+                            context_prompt,
+                            validation_feedback,
+                        )
                     else:
                         logger.error(
                             f"チャンク{chunk_idx}: IDバリデーション"
@@ -269,7 +301,7 @@ def run_pipeline(config: dict[str, Any], job_dir: Path, clean: bool = False) -> 
                 n_ab = sum(1 for u in utts if str(u.get("uncertain_reason", "")) == "AB_MISMATCH")
                 n_bc = sum(1 for u in utts if str(u.get("category", "")) == "BACKCHANNEL")
                 logger.info(
-                    f"[{i+1}/{total_chunks}] チャンク{chunk_idx}: 完了 "
+                    f"[{i+1}/{total_target_chunks}] チャンク{chunk_idx}: 完了 "
                     f"(utterances={len(utts)}, uncertain={n_uncertain}, AB_MISMATCH={n_ab}, BACKCHANNEL={n_bc})"
                 )
             else:

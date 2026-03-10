@@ -74,6 +74,7 @@ def build_prompt(
     id_cue_pairs: list[tuple[str, Cue]],
     dictionary: list[str] | dict | None = None,
     context_prompt: str | None = None,
+    validation_feedback: list[str] | None = None,
 ) -> str:
     """LLMに送るプロンプトを構築する。
 
@@ -82,11 +83,27 @@ def build_prompt(
         id_cue_pairs: 全(ID, Cue)ペア（オーバーラップ区間の参照用）
         dictionary: 用語辞書（オプション）。単純リスト形式またはカテゴリ別dict形式
         context_prompt: ジョブ固有の背景情報（オプション）
+        validation_feedback: 前回出力のバリデーション誤り（リトライ時のみ）
 
     Returns:
         プロンプト文字列
     """
     parts = []
+
+    # リトライ時: 前回のバリデーション誤りを冒頭に明示
+    if validation_feedback:
+        parts.append("=== 【重要】前回の出力の誤り ===")
+        parts.append(
+            "前回の応答は以下の理由でバリデーションに不合格となりました。同じ誤りを繰り返さないでください。"
+        )
+        for e in validation_feedback:
+            parts.append(f"- {e}")
+        parts.append("")
+        parts.append(
+            "id および source_ids には、必ず「主VTT（処理対象）」に記載された U000001 形式のIDのみを使用してください。"
+            "Zoom VTTの参照ラベル（ZOOM_REF_***）を id や source_ids に含めてはいけません。"
+        )
+        parts.append("")
 
     # コンテキストプロンプト（ジョブ固有の背景情報）
     if context_prompt:
@@ -105,6 +122,7 @@ def build_prompt(
 4. 出力は「処理対象」セクションのIDのみ。前文脈・後文脈のIDは出力しない
 5. source_idsは連続するIDのみ結合可。非連続IDの結合や、1つのIDの複数utteranceへの分割は禁止
 6. idフィールドには、入力で与えられた主VTTのID（U000001形式）または V_INSERT_*** のみを使用し、新しい形式のIDを独自に採番してはならない
+7. Zoom VTTの参照ラベル（ZOOM_REF_001 等）は参照用であり、JSONの id および source_ids に絶対に出力してはならない。id と source_ids には主VTTの U000001 形式のIDのみ（またはVTT補完時は V_INSERT_*）を使用すること
 
 【話者判定ルール】
 1. 主VTTの話者ラベルが最も信頼できる情報源である。主VTTで SPEAKER_00 となっている発話は、原則として SPEAKER_00 のまま出力すること
@@ -192,10 +210,10 @@ ACK_DECISION の判定基準:
         parts.append(f"[{uid}] {speaker}: {cue.text}")
 
     # VTT（補助）
-    parts.append("\n=== Zoom VTT（補助データ） ===")
+    parts.append("\n=== Zoom VTT（補助データ・参照ラベルは出力に使用禁止） ===")
     for i, cue in enumerate(chunk.vtt_cues):
         speaker = cue.speaker or ""
-        label = f"[V{i + 1:03d}]"
+        label = f"[ZOOM_REF_{i + 1:03d}]"
         if speaker:
             parts.append(f"{label} {speaker}: {cue.text}")
         else:

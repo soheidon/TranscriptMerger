@@ -24,6 +24,8 @@ def parse_args() -> argparse.Namespace:
   python main.py --job jobs/2026-03-07_定例会議
   python main.py --job jobs/2026-03-07_定例会議 --offset-sec 12.5
   python main.py --job jobs/2026-03-07_定例会議 --clean --best-effort
+  python main.py --job jobs/2026-03-07_定例会議 --chunk 12
+  python main.py --job jobs/2026-03-07_定例会議 --chunk 12 --chunk 31
         """,
     )
 
@@ -65,6 +67,15 @@ def parse_args() -> argparse.Namespace:
         "--best-effort",
         action="store_true",
         help="欠損チャンクがあっても仮出力を生成（completion_mode=best_effort）",
+    )
+
+    # 部分再処理
+    parser.add_argument(
+        "--chunk",
+        type=int,
+        action="append",
+        default=None,
+        help="再処理対象のチャンク番号。複数指定可（例: --chunk 12 --chunk 31）",
     )
 
     # デバッグ
@@ -109,6 +120,20 @@ def main() -> None:
         print(f"エラー: ジョブフォルダが見つかりません: {job_dir}", file=sys.stderr)
         sys.exit(1)
 
+    # 部分再処理時の安全策
+    if args.clean and args.chunk:
+        print(
+            "エラー: --clean と --chunk は併用できません。"
+            "部分再処理では既存チャンク結果を残す必要があります。",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if args.chunk:
+        invalid = [c for c in args.chunk if c < 0]
+        if invalid:
+            print(f"エラー: チャンク番号は0以上で指定してください: {invalid}", file=sys.stderr)
+            sys.exit(1)
+
     # 設定の読み込みとマージ（CLI引数 > job.yaml > config.yaml > デフォルト）
     app_config_path = Path(__file__).parent / "config.yaml"
     config = load_config(
@@ -126,13 +151,20 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("Transcript-Merger-AI 開始")
     logger.info(f"ジョブフォルダ: {job_dir}")
+    if args.chunk:
+        logger.info("対象チャンク限定モード: %s", sorted(set(args.chunk)))
     logger.info("=" * 60)
 
     # パイプライン実行
     # --clean の責務: main.py がフラグを受け取り、pipeline に渡す。
     # 実際の初期化処理は pipeline.py 内で ResumeManager.clean() を呼ぶ。
     try:
-        run_pipeline(config=config, job_dir=job_dir, clean=args.clean)
+        run_pipeline(
+            config=config,
+            job_dir=job_dir,
+            clean=args.clean,
+            selected_chunks=set(args.chunk) if args.chunk else None,
+        )
         logger.info("処理が正常に完了しました")
     except Exception:
         logger.exception("処理中にエラーが発生しました")
