@@ -39,6 +39,12 @@ offset:
   max_offset_sec: 600
   use_reading_normalization: false     # 初期実装では無効
 
+# --- 入力 ---
+input:
+  primary_vtt_filename: whisper_output.vtt
+  zoom_vtt_filename: zoom_output.vtt
+  use_secondary_vtt: true              # false で主VTTのみ処理（単一VTTモード）
+
 # --- 出力 ---
 output:
   formats:

@@ -28,7 +28,7 @@ from src.exporter import (
 )
 from src.id_manager import IDManager
 from src.llm_client import OUTPUT_SCHEMA, build_prompt, get_provider
-from src.offset import apply_offset, detect_offset
+from src.offset import apply_offset, build_no_secondary_offset_result, detect_offset
 from src.parser import parse_vtt
 from src.resume import ResumeManager
 from src.validator import validate_llm_output
@@ -64,30 +64,39 @@ def run_pipeline(
 
     primary_vtt_path = resolved["primary_vtt_path"]
     zoom_vtt_path = resolved["zoom_vtt_path"]
+    use_secondary_vtt = resolved.get("use_secondary_vtt", True)
 
     if not primary_vtt_path.exists():
         raise FileNotFoundError(f"主VTTファイルが見つかりません: {primary_vtt_path}")
-    if not zoom_vtt_path.exists():
-        raise FileNotFoundError(f"Zoom VTTファイルが見つかりません: {zoom_vtt_path}")
 
     primary_cues = parse_vtt(primary_vtt_path)
-    zoom_cues = parse_vtt(zoom_vtt_path)
+
+    if use_secondary_vtt:
+        if not zoom_vtt_path.exists():
+            raise FileNotFoundError(f"Zoom VTTファイルが見つかりません: {zoom_vtt_path}")
+        zoom_cues = parse_vtt(zoom_vtt_path)
+    else:
+        logger.info("単一VTTモード: 補助VTTなしで処理します")
+        zoom_cues = []
 
     if not primary_cues:
         raise ValueError("主VTTファイルにキューが含まれていません")
+
+    logger.info(f"主VTTキュー数: {len(primary_cues)}")
+    logger.info(f"Zoom VTTキュー数: {len(zoom_cues)}")
 
     # ============================================================
     # Step 2: 録音オフセット検出・補正
     # ============================================================
     logger.info("=" * 40 + " Step 2: オフセット検出 " + "=" * 40)
 
-    offset_result = detect_offset(primary_cues, zoom_cues, config["offset"])
+    if use_secondary_vtt:
+        offset_result = detect_offset(primary_cues, zoom_cues, config["offset"])
+        zoom_cues, excluded_count = apply_offset(zoom_cues, offset_result.applied_offset_sec)
+        offset_result.excluded_vtt_cues = excluded_count
+    else:
+        offset_result = build_no_secondary_offset_result(method="single_vtt")
 
-    # オフセット適用
-    zoom_cues, excluded_count = apply_offset(zoom_cues, offset_result.applied_offset_sec)
-    offset_result.excluded_vtt_cues = excluded_count
-
-    # オフセットレポート出力
     export_offset_report(offset_result, resolved["output_dir"] / "offset_report.json")
 
     # ============================================================
@@ -224,7 +233,12 @@ def run_pipeline(
         # プロンプト構築（リトライ時は前回のバリデーション誤りを渡す）
         validation_feedback: list[str] | None = None
         prompt = build_prompt(
-            chunk, id_cue_pairs, dictionary, context_prompt, validation_feedback
+            chunk,
+            id_cue_pairs,
+            dictionary,
+            context_prompt,
+            validation_feedback,
+            use_secondary_vtt=use_secondary_vtt,
         )
 
         # LLM呼び出し + IDバリデーション
@@ -280,6 +294,7 @@ def run_pipeline(
                             dictionary,
                             context_prompt,
                             validation_feedback,
+                            use_secondary_vtt=use_secondary_vtt,
                         )
                     else:
                         logger.error(
@@ -373,7 +388,7 @@ def run_pipeline(
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_primary_vtt": str(primary_vtt_path.name),
-        "source_zoom_vtt": str(zoom_vtt_path.name),
+        "source_zoom_vtt": str(zoom_vtt_path.name) if use_secondary_vtt else None,
         "applied_offset_sec": offset_result.applied_offset_sec,
         "offset_confidence": offset_result.confidence.value,
         "total_chunks": len(chunks),

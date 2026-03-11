@@ -8,8 +8,9 @@
 # input:
 #   primary_vtt_filename: whisper_output.vtt
 #   zoom_vtt_filename: zoom_output.vtt
-#   dictionary_path: dictionary.json    # 専門用語辞書（input/ 内に配置）
-#   speaker_map_path: speaker_map.json  # 話者マップ（input/ 内に配置）
+#   use_secondary_vtt: true             # false で主VTTのみ処理（単一VTTモード）
+#   dictionary_path: dictionary.json   # 専門用語辞書（input/ 内に配置）
+#   speaker_map_path: speaker_map.json # 話者マップ（input/ 内に配置）
 
 # --- オフセット ---
 # offset:

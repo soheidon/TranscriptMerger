@@ -49,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "input": {
         "primary_vtt_filename": "whisper_output.vtt",
         "zoom_vtt_filename": "zoom_output.vtt",
+        "use_secondary_vtt": True,
         "dictionary_path": None,
         "speaker_map_path": None,
     },
@@ -119,6 +120,11 @@ def apply_cli_overrides(config: dict, cli_args: argparse.Namespace) -> dict:
     elif cli_args.offset_skip:
         result["offset"]["mode"] = "skip"
 
+    # 単一VTTモード（CLI優先）
+    if getattr(cli_args, "single_vtt", False):
+        result["input"]["use_secondary_vtt"] = False
+        result["offset"]["mode"] = "skip"
+
     # 完了モード
     if cli_args.best_effort:
         result["output"]["completion_mode"] = "best_effort"
@@ -147,6 +153,7 @@ def resolve_paths(config: dict, job_dir: Path) -> dict:
     result["_resolved"] = {
         "primary_vtt_path": input_dir / result["input"]["primary_vtt_filename"],
         "zoom_vtt_path": input_dir / result["input"]["zoom_vtt_filename"],
+        "use_secondary_vtt": bool(result["input"].get("use_secondary_vtt", True)),
         "job_dir": job_dir,
         "input_dir": input_dir,
         "working_dir": job_dir / "working",

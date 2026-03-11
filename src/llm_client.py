@@ -69,50 +69,9 @@ OUTPUT_SCHEMA = {
 }
 
 
-def build_prompt(
-    chunk: Chunk,
-    id_cue_pairs: list[tuple[str, Cue]],
-    dictionary: list[str] | dict | None = None,
-    context_prompt: str | None = None,
-    validation_feedback: list[str] | None = None,
-) -> str:
-    """LLMに送るプロンプトを構築する。
-
-    Args:
-        chunk: 処理対象チャンク
-        id_cue_pairs: 全(ID, Cue)ペア（オーバーラップ区間の参照用）
-        dictionary: 用語辞書（オプション）。単純リスト形式またはカテゴリ別dict形式
-        context_prompt: ジョブ固有の背景情報（オプション）
-        validation_feedback: 前回出力のバリデーション誤り（リトライ時のみ）
-
-    Returns:
-        プロンプト文字列
-    """
-    parts = []
-
-    # リトライ時: 前回のバリデーション誤りを冒頭に明示
-    if validation_feedback:
-        parts.append("=== 【重要】前回の出力の誤り ===")
-        parts.append(
-            "前回の応答は以下の理由でバリデーションに不合格となりました。同じ誤りを繰り返さないでください。"
-        )
-        for e in validation_feedback:
-            parts.append(f"- {e}")
-        parts.append("")
-        parts.append(
-            "id および source_ids には、必ず「主VTT（処理対象）」に記載された U000001 形式のIDのみを使用してください。"
-            "Zoom VTTの参照ラベル（ZOOM_REF_***）を id や source_ids に含めてはいけません。"
-        )
-        parts.append("")
-
-    # コンテキストプロンプト（ジョブ固有の背景情報）
-    if context_prompt:
-        parts.append("=== この会議/インタビューの背景情報 ===")
-        parts.append(context_prompt)
-        parts.append("")
-
-    # システム指示
-    parts.append("""あなたは文字起こし統合・整形の専門家です。
+def _build_dual_vtt_instruction() -> str:
+    """2本VTT統合モード用のシステム指示文を返す。"""
+    return """あなたは文字起こし統合・整形の専門家です。
 以下のルールに厳密に従って、主VTT（Whisper+pyannote）とZoom VTT（補助データ）を統合・整形してください。
 
 【絶対ルール】
@@ -194,47 +153,112 @@ ACK_DECISION の判定基準:
 - LOW_CONFIDENCE: 両方とも聞き取りにくい
 - SPEAKER_AMBIGUOUS: 話者の判定が困難
 - OVERLAP: 発話が重複
-""")
+"""
 
-    # 前文脈
+
+def _build_single_vtt_instruction() -> str:
+    """単一VTTモード用のシステム指示文を返す。"""
+    return """あなたは文字起こし整形・補正の専門家です。
+以下のルールに厳密に従って、主VTT（Whisper+pyannote）のみを整形してください。
+
+【絶対ルール】
+1. 主VTTのみを根拠として整形すること。存在しない補助VTTを仮定してはならない
+2. 主VTTに根拠がない情報を絶対に追加しない（捏造禁止）
+3. 出力は「処理対象」セクションのIDのみ。前文脈・後文脈のIDは出力しない
+4. source_idsは連続するIDのみ結合可。非連続IDの結合や、1つのIDの複数utteranceへの分割は禁止
+5. idフィールドには、入力で与えられた主VTTのID（U000001形式）のみを使用すること。V_INSERT_* を含む新規IDを作成してはならない
+6. source は常に PRIMARY を使用すること。ZOOM や MERGED は使用しないこと
+7. vtt_supplemented は常に false にすること
+8. edit_type=VTT_SUPPLEMENT は使用しないこと
+9. uncertain_reason=AB_MISMATCH は使用しないこと
+
+【話者判定ルール】
+1. 主VTTの話者ラベルが最も信頼できる情報源である。主VTTで SPEAKER_00 となっている発話は、原則として SPEAKER_00 のまま出力すること
+2. 主VTTで SPEAKER_01 となっているが、文脈上明らかに別話者の応答である場合（質問への返答、相槌、確認応答など）は、SPEAKER_00 に変更してよい。この場合 edit_note にその旨を記録すること
+3. この会話に登場する話者は、主VTTに出現する話者ラベル（SPEAKER_00, SPEAKER_01 等）のいずれかである。新しい話者IDを作ってはならない
+4. SPEAKER_UNKNOWN は「どの話者か推定する手がかりが本当にゼロの場合」のみ使用すること。文脈や対話パターンから推定できる場合は SPEAKER_UNKNOWN を使わない
+5. uncertainフラグと話者判定は独立である。話者を既存の話者ラベルに割り当てたうえで、確信度が低い場合は uncertain=true, uncertain_reason="SPEAKER_AMBIGUOUS" を設定すること
+
+【不確実箇所の処理ルール】
+1. 聞き取りが不確実でも、テキストを絶対に削除・省略してはならない
+2. 推定されるテキストをそのまま text フィールドに入れたうえで uncertain=true を設定すること
+3. テキストが空の utterance を出力してはならない。どんなに不明瞭でも、聞こえた内容を最善の推定で記載すること
+4. 不確実な箇所が複数の発話にまたがる場合でも、発話単位で分割して各々に uncertain=true を付けること
+5. 意味不明な文字列がASR出力に含まれる場合、そのまま残さず、文脈から推定するか、推定できなければ該当部分を保守的に整形して uncertain=true を付けること
+6. 補助VTTがないため、確認できない箇所は LOW_CONFIDENCE または SPEAKER_AMBIGUOUS で扱うこと
+
+【低確信度時の整形制限】
+1. uncertain=true の発話では、自然化・要約・断定化を最小限にすること
+2. LOW_CONFIDENCE の場合、元の言い方が疑問・推量・言い淀みである可能性を保持すること
+3. 不確実な発話を、より自然な断定文へ書き換えすぎてはならない
+4. 意味が取りきれない場合でも、もっともらしい別文へ言い換えるのではなく、聞こえた内容を保守的に残すこと
+
+【発話分類ルール — 機能で判断する】
+- CONTENT: 新しい情報・意見・質問・説明・提案を含む発話
+- BACKCHANNEL: 削除しても会話の情報が一切失われない発話
+- ACK_DECISION: 提案や質問への明確な回答
+
+【修正種別（edit_type）】
+- NONE: 修正なし
+- NORMALIZE: 表記揺れ・誤字の修正のみ
+- UNRESOLVED: 判定不能
+
+【テキスト整形ルール】
+1. 意味を持たないフィラー語（えー、えっと、あのー、あー、うーん、まあ、そのー、なんか等）は削除すること
+2. ただし、相槌として意味がある「はい」「ええ」「そうですね」は削除しないこと
+3. 同じ語の繰り返しは1つに整理すること
+4. 言い直しは最終的な内容に整えること。ただし edit_type="NORMALIZE"、edit_note に元の表現を記録すること
+5. 文として不自然な途切れは、意味が通る一文に整えること
+6. 会話の文脈に全く合わない語は、ASRの誤認識の可能性を考慮し、BACKCHANNEL かつ uncertain=true で保守的に扱うこと
+7. 同一文書内で同じ語の表記を統一すること
+
+【不確実理由（uncertain_reason）】
+- NONE
+- LOW_CONFIDENCE
+- SPEAKER_AMBIGUOUS
+- OVERLAP
+"""
+
+
+def _append_common_sections(
+    parts: list[str],
+    chunk: Chunk,
+    dictionary: list[str] | dict | None,
+) -> None:
+    """前後文脈・主VTT・補助VTT・辞書をプロンプトに追加する。"""
     if chunk.context_before:
         parts.append("\n=== 前文脈（参照のみ・出力不要） ===")
         for cue in chunk.context_before:
             speaker = cue.speaker or "UNKNOWN"
             parts.append(f"[CTX] {speaker}: {cue.text}")
 
-    # 主VTT（処理対象）
     parts.append("\n=== 主VTT（Whisper+pyannote・処理対象） ===")
     for uid, cue in zip(chunk.srt_ids, chunk.srt_cues):
         speaker = cue.speaker or "UNKNOWN"
         parts.append(f"[{uid}] {speaker}: {cue.text}")
 
-    # VTT（補助）
-    parts.append("\n=== Zoom VTT（補助データ・参照ラベルは出力に使用禁止） ===")
-    for i, cue in enumerate(chunk.vtt_cues):
-        speaker = cue.speaker or ""
-        label = f"[ZOOM_REF_{i + 1:03d}]"
-        if speaker:
-            parts.append(f"{label} {speaker}: {cue.text}")
-        else:
-            parts.append(f"{label} {cue.text}")
+    if chunk.vtt_cues:
+        parts.append("\n=== Zoom VTT（補助データ・参照ラベルは出力に使用禁止） ===")
+        for i, cue in enumerate(chunk.vtt_cues):
+            speaker = cue.speaker or ""
+            label = f"[ZOOM_REF_{i + 1:03d}]"
+            if speaker:
+                parts.append(f"{label} {speaker}: {cue.text}")
+            else:
+                parts.append(f"{label} {cue.text}")
 
-    # 後文脈
     if chunk.context_after:
         parts.append("\n=== 後文脈（参照のみ・出力不要） ===")
         for cue in chunk.context_after:
             speaker = cue.speaker or "UNKNOWN"
             parts.append(f"[CTX] {speaker}: {cue.text}")
 
-    # 用語辞書（正しい表記のリスト）
     if dictionary:
         parts.append("\n=== 用語辞書（正しい表記のリスト） ===")
         parts.append("以下は、この会議に登場する可能性がある固有名詞の正しい表記です。")
         parts.append("音声認識による誤変換（読みが近い別の漢字、ひらがな/カタカナ表記、部分的な聞き取り等）を見つけた場合は、このリストの表記に修正してください。")
         parts.append("")
-
         if isinstance(dictionary, dict):
-            # 新フォーマット（カテゴリ付き）
             for category, terms in dictionary.items():
                 label = str(category)
                 if isinstance(terms, list) and terms:
@@ -243,10 +267,62 @@ ACK_DECISION の判定基準:
                 else:
                     parts.append(f"【{label}】（なし）")
         elif isinstance(dictionary, list):
-            # 旧フォーマット（単純リスト）互換
             for term in dictionary:
                 parts.append(f"- {term}")
 
+
+def build_prompt(
+    chunk: Chunk,
+    id_cue_pairs: list[tuple[str, Cue]],
+    dictionary: list[str] | dict | None = None,
+    context_prompt: str | None = None,
+    validation_feedback: list[str] | None = None,
+    use_secondary_vtt: bool = True,
+) -> str:
+    """LLMに送るプロンプトを構築する。
+
+    Args:
+        chunk: 処理対象チャンク
+        id_cue_pairs: 全(ID, Cue)ペア（オーバーラップ区間の参照用）
+        dictionary: 用語辞書（オプション）。単純リスト形式またはカテゴリ別dict形式
+        context_prompt: ジョブ固有の背景情報（オプション）
+        validation_feedback: 前回出力のバリデーション誤り（リトライ時のみ）
+        use_secondary_vtt: 補助VTTを使用する場合True（単一VTTモードではFalse）
+
+    Returns:
+        プロンプト文字列
+    """
+    del id_cue_pairs  # 現在は将来拡張用に保持
+
+    parts: list[str] = []
+
+    if validation_feedback:
+        parts.append("=== 【重要】前回の出力の誤り ===")
+        parts.append(
+            "前回の応答は以下の理由でバリデーションに不合格となりました。同じ誤りを繰り返さないでください。"
+        )
+        for e in validation_feedback:
+            parts.append(f"- {e}")
+        parts.append("")
+        if use_secondary_vtt:
+            parts.append(
+                "id および source_ids には、必ず「主VTT（処理対象）」に記載された U000001 形式のIDのみを使用してください。"
+                "Zoom VTTの参照ラベル（ZOOM_REF_***）を id や source_ids に含めてはいけません。"
+            )
+        else:
+            parts.append(
+                "id および source_ids には、必ず「主VTT（処理対象）」に記載された U000001 形式のIDのみを使用してください。"
+                "新しいIDや V_INSERT_* を作成してはいけません。"
+            )
+        parts.append("")
+
+    if context_prompt:
+        parts.append("=== この会議/インタビューの背景情報 ===")
+        parts.append(context_prompt)
+        parts.append("")
+
+    parts.append(_build_dual_vtt_instruction() if use_secondary_vtt else _build_single_vtt_instruction())
+    _append_common_sections(parts, chunk, dictionary)
     return "\n".join(parts)
 
 

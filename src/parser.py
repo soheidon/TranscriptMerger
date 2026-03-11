@@ -175,30 +175,42 @@ def parse_vtt(file_path: Path) -> list[Cue]:
         if tc_line_idx is None:
             continue
 
-        # タイムコード
+        # タイムコード（VTTはドット、SRT互換はカンマ）
         tc_match = re.match(
-            r"(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})"
+            r"(\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{2}:\d{2}[.,]\d{3})"
             r"\s*-->\s*"
-            r"(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})",
+            r"(\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{2}:\d{2}[.,]\d{3})",
             block_lines[tc_line_idx].strip(),
         )
         if not tc_match:
             logger.warning(f"VTTタイムコードのパースに失敗: {block_lines[tc_line_idx]}")
             continue
 
-        start = parse_timestamp_vtt(tc_match.group(1))
-        end = parse_timestamp_vtt(tc_match.group(2))
+        start_ts = tc_match.group(1)
+        end_ts = tc_match.group(2)
+        # SRT形式（カンマ）の場合は秒に変換してから共通処理
+        if "," in start_ts or "," in end_ts:
+            start = parse_timestamp_srt(start_ts)
+            end = parse_timestamp_srt(end_ts)
+        else:
+            start = parse_timestamp_vtt(start_ts)
+            end = parse_timestamp_vtt(end_ts)
 
         # テキスト（タイムコード行の後ろ）
         text_lines = block_lines[tc_line_idx + 1:]
         raw_text = "\n".join(text_lines).strip()
 
-        # VTT voice tag から話者を抽出: <v SPEAKER_00>テキスト</v>
+        # VTT voice tag または テキスト先頭の話者ラベルを抽出
         speaker = None
         voice_match = re.match(r"<v\s+([^>]+)>(.*?)(?:</v>)?$", raw_text, re.DOTALL)
         if voice_match:
             speaker = voice_match.group(1).strip()
             raw_text = voice_match.group(2).strip()
+        else:
+            speaker, raw_text = extract_speaker_from_text(raw_text)
+
+        if not raw_text.strip():
+            continue
 
         cue_index += 1
         cues.append(Cue(

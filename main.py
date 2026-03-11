@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
   python main.py --job jobs/2026-03-07_定例会議
   python main.py --job jobs/2026-03-07_定例会議 --offset-sec 12.5
   python main.py --job jobs/2026-03-07_定例会議 --clean --best-effort
+  python main.py --job jobs/2026-03-07_定例会議 --single-vtt
   python main.py --job jobs/2026-03-07_定例会議 --chunk 12
   python main.py --job jobs/2026-03-07_定例会議 --chunk 12 --chunk 31
         """,
@@ -58,6 +59,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     # 実行モード
+    parser.add_argument(
+        "--single-vtt",
+        action="store_true",
+        help="補助VTTを使わず、主VTTのみで処理する",
+    )
     parser.add_argument(
         "--clean",
         action="store_true",

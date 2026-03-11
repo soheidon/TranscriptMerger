@@ -124,6 +124,26 @@ def _compute_mad(values: list[float]) -> float:
     return median(deviations)
 
 
+def build_no_secondary_offset_result(method: str = "single_vtt") -> OffsetResult:
+    """補助VTT未使用時のオフセット結果を返す。"""
+    return OffsetResult(
+        estimated_offset_sec=0.0,
+        confidence=OffsetConfidence.HIGH,
+        valid_pairs=0,
+        total_pairs_before_filter=0,
+        mad=0.0,
+        std_dev=0.0,
+        method=method,
+        sample_windows_used=[],
+        drift_detected=False,
+        drift_delta_sec=None,
+        top_candidates=[],
+        applied_offset_sec=0.0,
+        override=None,
+        excluded_vtt_cues=0,
+    )
+
+
 def detect_offset(
     srt_cues: list[Cue],
     vtt_cues: list[Cue],
